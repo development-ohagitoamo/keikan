@@ -92,3 +92,12 @@ button{cursor:pointer}
 .login h1{font-size:44px;margin:0;letter-spacing:.04em}
 .login p{margin:0;color:var(--mute)}
 .demo{background:var(--gold);color:#fff;font-size:12px;text-align:center;padding:4px;flex-shrink:0}
+.stage{position:relative;margin:16px auto 0;overflow:hidden;touch-action:none;-webkit-user-select:none;user-select:none;background:#E9E2D0}
+.stagecv{display:block;width:100%;height:100%}
+.cropbox{position:absolute;border:2px solid var(--gold2);box-shadow:0 0 0 9999px rgba(14,24,48,.55);cursor:move;touch-action:none}
+.cropbox span{position:absolute;width:44px;height:44px;margin:-22px 0 0 -22px;touch-action:none}
+.cropbox span::after{content:'';position:absolute;left:12px;top:12px;width:20px;height:20px;border-radius:50%;background:var(--ivory);border:2px solid var(--gold)}
+.cropbox span[data-drag=nw]{left:0;top:0;cursor:nwse-resize}
+.cropbox span[data-drag=ne]{left:100%;top:0;cursor:nesw-resize}
+.cropbox span[data-drag=sw]{left:0;top:100%;cursor:nesw-resize}
+.cropbox span[data-drag=se]{left:100%;top:100%;cursor:nwse-resize}

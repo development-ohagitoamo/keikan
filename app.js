@@ -263,8 +263,8 @@ function render() {
   if (!S.ready) { bar.innerHTML = ''; main.innerHTML = viewLogin(); return; }
   const v = S.view;
   main.innerHTML = (DEMO ? '<div class="demo" style="margin:-8px -24px 12px">デモ表示（保存されません）</div>' : '') +
-    (v ? (v.type === 'detail' ? viewDetail(v) : viewFolder(v)) : S.tab === 'year' ? viewYear() : S.tab === 'month' ? viewMonth() : viewRegister());
-  if (v && v.type === 'detail') bar.innerHTML = '';
+    (v ? (v.type === 'detail' ? viewDetail(v) : v.type === 'crop' ? viewCrop(v) : viewFolder(v)) : S.tab === 'year' ? viewYear() : S.tab === 'month' ? viewMonth() : viewRegister());
+  if (v && (v.type === 'detail' || v.type === 'crop')) bar.innerHTML = '';
   else if (v && S.selecting) {
     const off = S.sel.size ? '' : 'disabled';
     bar.innerHTML = `<button class="act" data-act="dest" data-mode="move" ${off}>${ICON.move}移動</button><button class="act" data-act="dest" data-mode="copy" ${off}>${ICON.copy}コピー</button><button class="act" data-act="askDelete" ${off}>${ICON.trash}削除</button>`;
@@ -273,6 +273,7 @@ function render() {
     bar.innerHTML = t('year', ICON.bars, '年間サマリ') + t('month', ICON.pie, '月別サマリ') + t('reg', ICON.cam, '登録');
   }
   if (v && v.type === 'detail') loadPreview(v);
+  if (v && v.type === 'crop') mountCrop(v);
 }
 
 function viewLogin() {
@@ -407,17 +408,86 @@ async function startApp() {
   try { S.files = await Store.list(); S.ready = true; closeSheet(); render(); }
   catch (e) { closeSheet(); if (e.auth) { S.ready = false; render(); } else { render(); msg('読み込みに失敗しました。通信環境を確認して、開き直してください。'); } }
 }
+async function readCanvas(cv) {
+  const blob = await new Promise((r) => cv.toBlob(r, 'image/jpeg', 0.85));
+  let text = '';
+  try { text = await ocr(cv); } catch (e) { text = ''; }
+  const t = norm(text);
+  return { blob, mime: 'image/jpeg', ext: 'jpg', date: parseDate(t), amount: parseAmount(t) };
+}
+function openDetail(r, back) {
+  S.view = { type: 'detail', isNew: true, back, blob: r.blob, mime: r.mime, ext: r.ext, date: r.date, amount: r.amount || 0, cat: '', vendor: '', read: { date: !!r.date, amount: !!r.amount } };
+  closeSheet(); render();
+  if (!r.date && !r.amount) msg('文字が不鮮明なため読み取れませんでした。\n手入力してください。');
+}
+async function readAndOpen(cv, back) {
+  busy('読み取り中…');
+  try { openDetail(await readCanvas(cv), back); }
+  catch (e) { console.error(e); msg('読み取りに失敗しました。\nもう一度お試しください。'); }
+}
 async function handleFile(file) {
   if (!file) return;
-  busy('読み取り中…');
+  S.selecting = false; S.sel.clear();
+  const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
+  if (isPdf) {
+    busy('読み取り中…');
+    try { openDetail(await readReceipt(file), S.view); }
+    catch (e) { console.error(e); msg('このファイルは開けませんでした。\n写真または PDF を選んでください。'); }
+    return;
+  }
+  busy('画像を開いています…');
   try {
-    const r = await readReceipt(file);
-    S.view = { type: 'detail', isNew: true, back: S.view, blob: r.blob, mime: r.mime, ext: r.ext, date: r.date, amount: r.amount || 0, cat: '', vendor: '', read: { date: !!r.date, amount: !!r.amount } };
-    S.selecting = false; S.sel.clear();
+    const cv = await imageCanvas(file);
+    S.view = { type: 'crop', cv, back: S.view, box: { x: 0.06, y: 0.06, w: 0.88, h: 0.88 } };
     closeSheet(); render();
-    if (!r.date && !r.amount) msg('文字が不鮮明なため読み取れませんでした。\n手入力してください。');
   } catch (e) { console.error(e); msg('このファイルは開けませんでした。\n写真または PDF を選んでください。'); }
 }
+
+/* ---------- 切り取り（範囲を選ぶ） ---------- */
+function viewCrop() {
+  return `<div class="head"><div style="display:flex;align-items:center"><button class="iconbtn" data-act="closeCrop" aria-label="戻る">${ICON.left}</button><h1 class="mincho" style="font-size:20px">範囲を選ぶ</h1></div></div><div class="rule"></div>
+  <p class="mute" style="margin:14px 0 0">四隅の丸を動かして、領収書の部分だけを囲んでください。枠の内側を動かすと位置を移せます。</p>
+  <div class="stage" id="stage"><div class="cropbox" id="cropbox" data-drag="move"><span data-drag="nw"></span><span data-drag="ne"></span><span data-drag="sw"></span><span data-drag="se"></span></div></div>
+  <button class="primary" style="margin-top:18px" data-act="doCrop">この範囲で読み取る</button>
+  <button class="textbtn" style="width:100%;margin-top:6px" data-act="noCrop">切り取らずに読み取る</button>`;
+}
+function mountCrop(v) {
+  const st = $('#stage'); if (!st) return;
+  const W = $('#main').clientWidth - 48, H = Math.max(240, window.innerHeight * 0.6);
+  const k = Math.min(W / v.cv.width, H / v.cv.height);
+  st.style.width = Math.round(v.cv.width * k) + 'px'; st.style.height = Math.round(v.cv.height * k) + 'px';
+  v.cv.className = 'stagecv'; st.prepend(v.cv);
+  placeBox(v);
+}
+function placeBox(v) {
+  const b = $('#cropbox'); if (!b) return;
+  Object.assign(b.style, { left: v.box.x * 100 + '%', top: v.box.y * 100 + '%', width: v.box.w * 100 + '%', height: v.box.h * 100 + '%' });
+}
+let drag = null;
+document.addEventListener('pointerdown', (e) => {
+  const h = e.target.closest('[data-drag]'), v = S.view;
+  if (!h || !v || v.type !== 'crop') return;
+  e.preventDefault();
+  drag = { mode: h.dataset.drag, st: $('#stage').getBoundingClientRect(), x0: e.clientX, y0: e.clientY, b0: { ...v.box } };
+});
+document.addEventListener('pointermove', (e) => {
+  if (!drag || !S.view || S.view.type !== 'crop') return;
+  e.preventDefault();
+  const v = S.view, dx = (e.clientX - drag.x0) / drag.st.width, dy = (e.clientY - drag.y0) / drag.st.height, b = { ...drag.b0 }, MIN = 0.1;
+  const clamp = (n, a, z) => Math.min(z, Math.max(a, n));
+  if (drag.mode === 'move') { b.x = clamp(b.x + dx, 0, 1 - b.w); b.y = clamp(b.y + dy, 0, 1 - b.h); }
+  else {
+    let L = b.x, T = b.y, R = b.x + b.w, B = b.y + b.h;
+    if (drag.mode.includes('w')) L = clamp(L + dx, 0, R - MIN);
+    if (drag.mode.includes('e')) R = clamp(R + dx, L + MIN, 1);
+    if (drag.mode.includes('n')) T = clamp(T + dy, 0, B - MIN);
+    if (drag.mode.includes('s')) B = clamp(B + dy, T + MIN, 1);
+    Object.assign(b, { x: L, y: T, w: R - L, h: B - T });
+  }
+  v.box = b; placeBox(v);
+}, { passive: false });
+['pointerup', 'pointercancel'].forEach((t) => document.addEventListener(t, () => { drag = null; }));
+
 async function eachSelected(text, fn) {
   const targets = S.files.filter((f) => S.sel.has(f.id));
   busy(text);
@@ -442,6 +512,15 @@ const actions = {
     S.view = { type: 'detail', isNew: false, id: f.id, orig: f, back: S.view, mime: f.mime, ext: extOf(f), date: f.date, amount: f.amount, cat: f.cat, vendor: f.vendor, read: {} };
     render();
   },
+  closeCrop() { S.view = S.view.back || null; render(); },
+  doCrop() {
+    const v = S.view, b = v.box, c = v.cv;
+    const sx = Math.round(b.x * c.width), sy = Math.round(b.y * c.height), sw = Math.round(b.w * c.width), sh = Math.round(b.h * c.height);
+    const out = document.createElement('canvas'); out.width = sw; out.height = sh;
+    out.getContext('2d').drawImage(c, sx, sy, sw, sh, 0, 0, sw, sh);
+    readAndOpen(out, v.back);
+  },
+  noCrop() { readAndOpen(S.view.cv, S.view.back); },
   closeDetail() { const v = S.view; if (v.url) URL.revokeObjectURL(v.url); S.view = v.back || null; render(); },
   cat() { S.sheet = { type: 'cat' }; renderSheet(); },
   pickCat(d) {
