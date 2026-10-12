@@ -58,9 +58,11 @@ button{cursor:pointer}
 .ghost{width:100%;height:48px;border:1px solid var(--navy);border-radius:6px;background:transparent;font-weight:700;display:flex;align-items:center;justify-content:center;text-decoration:none;color:var(--navy)}
 .all{display:flex;align-items:center;justify-content:space-between;margin-top:8px}
 .all label{min-height:44px;display:flex;align-items:center;gap:14px;font-weight:700}
-.preview{margin-top:18px;height:180px;border:1px dashed #7B869C;background:#E9E2D0;display:flex;align-items:center;justify-content:center;color:var(--mute);font-size:13px;overflow:hidden}
-.preview img{width:100%;height:100%;object-fit:contain}
-.preview a{color:var(--navy);font-weight:700;padding:12px}
+.preview{margin-top:18px;max-height:60dvh;min-height:120px;overflow-y:auto;-webkit-overflow-scrolling:touch;border:1px solid var(--line);background:#E9E2D0}
+.preview p{margin:0;padding:48px 0;text-align:center}
+.preview img,.preview canvas{display:block;width:100%;height:auto}
+.preview canvas+canvas{margin-top:8px}
+.full{color:var(--navy);font-weight:700;white-space:nowrap}
 .field{display:flex;flex-direction:column;gap:6px;margin-top:16px}
 .field label{font-size:13px;color:var(--mute)}
 .field input,.field .sel{height:48px;width:100%;padding:0 14px;border:1px solid var(--navy);border-radius:4px;background:var(--paper);font-size:16px;text-align:left;-webkit-appearance:none;appearance:none}

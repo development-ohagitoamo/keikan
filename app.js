@@ -159,13 +159,25 @@ const Store = DEMO ? Demo : Drive;
 /* ---------- 文字の読み取り（端末内で処理。画像は外部に送らない） ---------- */
 const norm = (t) => t.replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0)).replace(/，/g, ',').replace(/[￥\\]/g, '¥').replace(/[ \t　]+/g, '');
 function parseDate(t) {
-  let y, mo, d, m = t.match(/(20\d{2})[年\/\-.](\d{1,2})[月\/\-.](\d{1,2})/);
-  if (m) { y = +m[1]; mo = +m[2]; d = +m[3]; }
-  else if ((m = t.match(/令和(\d{1,2}|元)年(\d{1,2})月(\d{1,2})/))) { y = 2018 + (m[1] === '元' ? 1 : +m[1]); mo = +m[2]; d = +m[3]; }
-  else return '';
-  const dt = new Date(y, mo - 1, d);
-  if (dt.getFullYear() !== y || dt.getMonth() !== mo - 1 || dt.getDate() !== d) return '';
-  return `${y}-${pad(mo)}-${pad(d)}`;
+  // 領収書内の日付候補をすべて拾い、「日付らしい行にあるもの」→「新しいもの」の順で選ぶ。未来日・7年より前は除外。
+  const today = new Date(), min = new Date(THIS_YEAR - 7, 0, 1), yy = THIS_YEAR % 100;
+  const KEY = /(日付|発行日|領収日|利用日|取引日|注文日|購入日|日時|年月日)/;
+  const cands = [];
+  const add = (y, mo, d, line) => {
+    const dt = new Date(y, mo - 1, d);
+    if (dt.getFullYear() !== y || dt.getMonth() !== mo - 1 || dt.getDate() !== d) return;
+    if (dt > today || dt < min) return;
+    cands.push({ s: `${y}-${pad(mo)}-${pad(d)}`, key: KEY.test(line) ? 1 : 0 });
+  };
+  for (const line of t.split('\n')) {
+    for (const m of line.matchAll(/(20\d{2})[年\/\-.](\d{1,2})[月\/\-.](\d{1,2})/g)) add(+m[1], +m[2], +m[3], line);
+    for (const m of line.matchAll(/令和(\d{1,2}|元)年(\d{1,2})月(\d{1,2})/g)) add(2018 + (m[1] === '元' ? 1 : +m[1]), +m[2], +m[3], line);
+    for (const m of line.matchAll(/R(\d{1,2})[.\/](\d{1,2})[.\/](\d{1,2})/g)) add(2018 + +m[1], +m[2], +m[3], line);
+    for (const m of line.matchAll(/(?<![\d\/.])(\d{2})[\/.](\d{1,2})[\/.](\d{1,2})(?![\d\/.])/g)) if (+m[1] >= 18 && +m[1] <= yy) add(2000 + +m[1], +m[2], +m[3], line);
+  }
+  if (!cands.length) return '';
+  cands.sort((a, b) => b.key - a.key || (a.s < b.s ? 1 : a.s > b.s ? -1 : 0));
+  return cands[0].s;
 }
 function parseAmount(t) {
   const nums = (s, re) => { const o = []; for (const m of s.matchAll(re)) { const v = +(m[1] || m[2]).replace(/[,.]/g, ''); if (v > 0 && v < 1e8) o.push(v); } return o; };
@@ -321,7 +333,7 @@ function viewFolder(v) {
   <div class="list">${rows || '<div class="empty">登録なし</div>'}</div>`;
 }
 
-function detailOk(v) { return !!(v.date && v.amount > 0 && v.cat && v.vendor.trim()); }
+function detailOk(v) { return !!(v.date && v.amount > 0 && v.cat); }
 function detailName(v) {
   if (!(v.cat && v.amount > 0)) return '';
   const ym = v.id ? (v.date.slice(0, 7) !== v.orig.date.slice(0, 7) && v.date ? v.date.slice(0, 7) : v.orig.ym) : (v.date || THIS_YM).slice(0, 7);
@@ -329,23 +341,39 @@ function detailName(v) {
 }
 function viewDetail(v) {
   const miss = (k) => (v.isNew && !v.read[k] ? ' miss' : '');
-  const hint = (k) => (v.isNew && !v.read[k] ? '<div class="hint">読み取れませんでした。入力してください。</div>' : '');
+  const hint = (k) => (!v.isNew ? '' : v.read[k] ? '<div class="hint">読み取った内容です。領収書と同じか確認してください。</div>' : '<div class="hint">読み取れませんでした。入力してください。</div>');
   return `<div class="head"><div style="display:flex;align-items:center"><button class="iconbtn" data-act="closeDetail" aria-label="戻る">${ICON.left}</button><h1 class="mincho" style="font-size:20px">${v.isNew ? '読み取り内容の確認' : '取引詳細'}</h1></div></div><div class="rule"></div>
-  <div class="preview" id="preview">読み込み中…</div>
-  <div class="mute" style="margin-top:8px">保存名　<span id="fname">${esc(detailName(v))}</span></div>
+  <div class="preview" id="preview"><p class="mute">読み込み中…</p></div>
+  <div class="mute" style="margin-top:8px;display:flex;justify-content:space-between;gap:12px"><span>保存名　<span id="fname">${esc(detailName(v))}</span></span><a id="openfull" class="full" target="_blank" rel="noopener" hidden>全画面で見る</a></div>
   <div class="field${miss('date')}"><label for="f-date">取引日</label><input id="f-date" type="date" data-f="date" value="${esc(v.date)}" max="${THIS_YEAR + 1}-12-31">${hint('date')}</div>
   <div class="field${miss('amount')}"><label for="f-amount">金額（円）</label><input id="f-amount" type="text" inputmode="numeric" data-f="amount" value="${v.amount ? v.amount : ''}" placeholder="例：3300">${hint('amount')}</div>
   <div class="field"><label id="l-cat">カテゴリ</label><button class="sel" aria-labelledby="l-cat" data-act="cat"><span>${v.cat ? esc(v.cat) : '選んでください'}</span>${ICON.down}</button></div>
-  <div class="field"><label for="f-vendor">取引先</label><input id="f-vendor" type="text" data-f="vendor" list="vendors" maxlength="30" value="${esc(v.vendor)}" placeholder="例：Amazon"><datalist id="vendors">${vendors().map((x) => `<option value="${esc(x)}">`).join('')}</datalist></div>
+  <div class="field"><label for="f-vendor">取引先（任意）</label><input id="f-vendor" type="text" data-f="vendor" list="vendors" maxlength="30" value="${esc(v.vendor)}" placeholder="例：Amazon"><datalist id="vendors">${vendors().map((x) => `<option value="${esc(x)}">`).join('')}</datalist></div>
   <div style="margin-top:24px"><button class="primary" id="save" data-act="save" ${detailOk(v) ? '' : 'disabled'}>保存する</button>
   <div class="mute" style="text-align:center;margin-top:10px" id="dest"></div></div>`;
 }
 async function loadPreview(v) {
+  const fail = (e) => { const el = $('#preview'); if (el) el.innerHTML = `<p class="mute">${e && e.auth ? 'ログインし直すと表示されます' : '表示できませんでした'}</p>`; };
   try {
-    if (!v.url) v.url = URL.createObjectURL(v.blob || await Store.download(v.orig));
+    if (!v.src) v.src = v.blob || await Store.download(v.orig);
+    if (!v.url) v.url = URL.createObjectURL(v.src);
     const el = $('#preview'); if (!el || S.view !== v) return;
-    el.innerHTML = v.mime === 'application/pdf' ? `<a href="${v.url}" target="_blank" rel="noopener">PDFを開く</a>` : `<a href="${v.url}" target="_blank" rel="noopener" style="padding:0;width:100%;height:100%"><img src="${v.url}" alt="領収書の画像"></a>`;
-  } catch (e) { const el = $('#preview'); if (el) el.textContent = e.auth ? 'ログインし直すと表示されます' : '画像を表示できませんでした'; }
+    const full = $('#openfull'); if (full) { full.href = v.url; full.hidden = false; }
+    if (v.mime !== 'application/pdf') { el.innerHTML = `<img src="${v.url}" alt="領収書の画像">`; return; }
+    if (!window.pdfjsLib) { el.innerHTML = '<p class="mute">「全画面で見る」から開いてください</p>'; return; }
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    const pdf = await pdfjsLib.getDocument({ data: await v.src.arrayBuffer() }).promise;
+    const w = el.clientWidth || 340, dpr = Math.min(window.devicePixelRatio || 1, 2);
+    let first = true;
+    for (let p = 1; p <= Math.min(pdf.numPages, 10); p++) {
+      const pg = await pdf.getPage(p), vp = pg.getViewport({ scale: (w / pg.getViewport({ scale: 1 }).width) * dpr });
+      const cv = document.createElement('canvas'); cv.width = vp.width; cv.height = vp.height;
+      await pg.render({ canvasContext: cv.getContext('2d'), viewport: vp }).promise;
+      if (S.view !== v || !el.isConnected) return;
+      if (first) { el.innerHTML = ''; first = false; }
+      el.appendChild(cv);
+    }
+  } catch (e) { fail(e); }
 }
 
 function renderSheet() {
