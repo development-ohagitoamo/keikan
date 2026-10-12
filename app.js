@@ -3,6 +3,7 @@
 
 const CID = window.KEIKAN_CLIENT_ID || '';
 const DEMO = new URLSearchParams(location.search).has('demo');
+const REDIRECT = new URL('./', location.href).href;
 const API = 'https://www.googleapis.com/drive/v3';
 const UPLOAD = 'https://www.googleapis.com/upload/drive/v3';
 const FOLDER = 'application/vnd.google-apps.folder';
@@ -44,28 +45,27 @@ const S = {
 
 /* ---------- Google ログイン ---------- */
 const Auth = {
-  token: null, exp: 0, client: null, pending: null,
+  token: null, exp: 0,
   valid() { return !!this.token && Date.now() < this.exp - 60000; },
   load() { try { const s = JSON.parse(sessionStorage.getItem('kk_tok')); if (s) { this.token = s.t; this.exp = s.e; } } catch (e) { /* 保存領域が使えなくても動く */ } },
   clear() { this.token = null; this.exp = 0; try { sessionStorage.removeItem('kk_tok'); } catch (e) { /* 同上 */ } },
+  // ページごと Google のログイン画面へ移動し、戻ってきた URL からログイン情報を受け取る（iPhone の Safari・ホーム画面アプリでも動く方式）
   login() {
-    return new Promise((res, rej) => {
-      if (!window.google || !google.accounts) return rej(new Error('gis'));
-      this.pending = { res, rej };
-      if (!this.client) {
-        this.client = google.accounts.oauth2.initTokenClient({
-          client_id: CID, scope: 'https://www.googleapis.com/auth/drive.file',
-          callback: (r) => {
-            if (r.error || !r.access_token) return this.pending.rej(new Error('login'));
-            this.token = r.access_token; this.exp = Date.now() + r.expires_in * 1000;
-            try { sessionStorage.setItem('kk_tok', JSON.stringify({ t: this.token, e: this.exp })); } catch (e) { /* 同上 */ }
-            this.pending.res();
-          },
-          error_callback: (e) => this.pending.rej(e),
-        });
-      }
-      this.client.requestAccessToken();
-    });
+    const state = Math.random().toString(36).slice(2);
+    try { sessionStorage.setItem('kk_state', state); } catch (e) { /* 同上 */ }
+    const q = new URLSearchParams({ client_id: CID, redirect_uri: REDIRECT, response_type: 'token', scope: 'https://www.googleapis.com/auth/drive.file', include_granted_scopes: 'true', state });
+    location.href = 'https://accounts.google.com/o/oauth2/v2/auth?' + q;
+  },
+  fromHash() {
+    if (!/access_token=|error=/.test(location.hash)) return '';
+    const h = new URLSearchParams(location.hash.slice(1));
+    history.replaceState(null, '', location.pathname + location.search);
+    let st = null;
+    try { st = sessionStorage.getItem('kk_state'); sessionStorage.removeItem('kk_state'); } catch (e) { /* 同上 */ }
+    if (h.get('error') || !h.get('access_token') || (st && h.get('state') !== st)) return 'error';
+    this.token = h.get('access_token'); this.exp = Date.now() + (+h.get('expires_in') || 3600) * 1000;
+    try { sessionStorage.setItem('kk_tok', JSON.stringify({ t: this.token, e: this.exp })); } catch (e) { /* 同上 */ }
+    return 'ok';
   },
 };
 
@@ -383,7 +383,7 @@ function renderSheet() {
   const card = (h) => `<div class="card" role="dialog" aria-modal="true">${h}</div>`;
   if (s.type === 'msg') el.innerHTML = card(`<p>${esc(s.text)}</p><button class="primary h48" data-act="closeSheet">OK</button>`);
   else if (s.type === 'busy') el.innerHTML = card(`<div class="spin"></div><p>${esc(s.text)}</p>`);
-  else if (s.type === 'login') el.innerHTML = card(`<p>ログインの有効期限が切れました。\nログインし直してから、もう一度操作してください。</p><button class="primary h48" data-act="relogin">Google でログイン</button>`);
+  else if (s.type === 'login') el.innerHTML = card(`<p>ログインの有効期限が切れました。\nログインし直してください。保存していない入力内容は消えます。</p><button class="primary h48" data-act="relogin">Google でログイン</button>`);
   else if (s.type === 'confirm') el.innerHTML = card(`<p>${esc(s.text)}</p><div class="btns"><button class="ghost" data-act="closeSheet">キャンセル</button><button class="primary h48" data-act="doDelete">削除する</button></div>`);
   else if (s.type === 'zip') el.innerHTML = card(`<p>${esc(s.file.name)}\nを作成しました。</p>${navigator.canShare && navigator.canShare({ files: [s.file] }) ? '<button class="primary h48" data-act="share">保存先・共有先を選ぶ</button>' : ''}<a class="ghost" href="${s.url}" download="${esc(s.file.name)}">この端末に保存</a><button class="textbtn" data-act="closeSheet">閉じる</button>`);
   else if (s.type === 'dest') {
@@ -496,8 +496,8 @@ async function eachSelected(text, fn) {
 }
 
 const actions = {
-  async login() { try { await Auth.login(); await startApp(); } catch (e) { msg('ログインできませんでした。\nもう一度お試しください。'); } },
-  async relogin() { try { await Auth.login(); closeSheet(); if (S.view && S.view.type === 'detail') loadPreview(S.view); } catch (e) { msg('ログインできませんでした。\nもう一度お試しください。'); } },
+  login() { Auth.login(); },
+  relogin() { Auth.login(); },
   logout() { Auth.clear(); S.ready = false; S.files = []; S.view = null; render(); },
   closeSheet() { if (S.sheet && S.sheet.url) URL.revokeObjectURL(S.sheet.url); closeSheet(); },
   tab(d) { S.tab = d.tab; S.view = null; S.selecting = false; S.sel.clear(); render(); },
@@ -602,5 +602,12 @@ document.addEventListener('change', (e) => {
   if ('all' in t.dataset) { const l = inMonth(S.view.ym); S.sel = new Set(t.checked ? l.map((f) => f.id) : []); render(); }
 });
 
-Auth.load();
-if (DEMO || (CID && Auth.valid())) startApp(); else render();
+if (/ Line\//i.test(navigator.userAgent) && !/openExternalBrowser/.test(location.search)) {
+  // LINE のアプリ内ブラウザでは Google ログインが使えないため、Safari で開き直す
+  location.replace(location.href.split('#')[0] + (location.search ? '&' : '?') + 'openExternalBrowser=1');
+} else {
+  Auth.load();
+  const back = Auth.fromHash();
+  if (DEMO || (CID && Auth.valid())) startApp();
+  else { render(); if (back === 'error') msg('ログインできませんでした。\nもう一度お試しください。'); }
+}
