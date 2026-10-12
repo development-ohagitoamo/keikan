@@ -278,7 +278,7 @@ function render() {
 
 function viewLogin() {
   if (!CID && !DEMO) return `<div class="login"><h1 class="mincho">keikan</h1><p>Google ログインの設定がまだ済んでいません。config.js にクライアント ID を入れてください。</p><a class="ghost" href="?demo">デモ表示で画面を見る</a></div>`;
-  return `<div class="login"><h1 class="mincho">keikan</h1><p>領収書を月ごとに整理し、ZIP にまとめて税理士へ送ります。データはあなたの Google ドライブにだけ保存されます。</p><button class="primary" data-act="login">Google でログイン</button></div>`;
+  return `<div class="login"><h1 class="mincho">keikan</h1><p>領収書を月ごとに整理し、ZIP にまとめて税理士へ送ります。データはあなたの Google ドライブにだけ保存されます。</p><button class="primary" data-act="login">Google でログイン</button><a class="mute" href="privacy.html" style="text-align:center">プライバシーポリシー</a></div>`;
 }
 
 function viewYear() {
