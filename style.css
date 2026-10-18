@@ -101,3 +101,7 @@ button{cursor:pointer}
 .cropbox span[data-drag=ne]{left:100%;top:0;cursor:nesw-resize}
 .cropbox span[data-drag=sw]{left:0;top:100%;cursor:nesw-resize}
 .cropbox span[data-drag=se]{left:100%;top:100%;cursor:nwse-resize}
+.fileprev{display:flex;flex-direction:column;align-items:center;gap:8px;padding:32px 20px;text-align:center}
+.fileprev b{word-break:break-all}
+.tile.sm[for=dir]{display:flex}
+.flist{margin:0;padding:0 16px 16px 36px;font-size:13px;color:var(--mute);word-break:break-all}

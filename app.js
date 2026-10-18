@@ -30,6 +30,8 @@ const ICON = {
   pie: '<svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5V12l6 6"/></svg>',
   cam: '<svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>',
   up: '<svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4M7 9l5-5 5 5M5 20h14"/></svg>',
+  folder: '<svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h6l2 2h10v11H3z"/></svg>',
+  doc: '<svg aria-hidden="true" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4M9 12h6M9 16h6"/></svg>',
   zip: '<svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16v13H4zM4 7l2-3h12l2 3M12 10v6M9.5 13.5L12 16l2.5-2.5"/></svg>',
   move: '<svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h6l2 2h8v10H4zM11 14h6M14.5 11.5L17 14l-2.5 2.5"/></svg>',
   copy: '<svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 9h11v11H9zM5 15H4V4h11v1"/></svg>',
@@ -70,8 +72,8 @@ const Auth = {
 };
 
 /* ---------- 保存先：Google ドライブ ---------- */
-const props = (m) => ({ keikan: '1', date: m.date, amount: String(m.amount), cat: m.cat, vendor: m.vendor, ym: m.ym });
-const toRec = (f) => { const p = f.appProperties || {}; return { id: f.id, name: f.name, mime: f.mimeType, date: p.date || '', amount: +p.amount || 0, cat: p.cat || '', vendor: p.vendor || '', ym: p.ym || (p.date || '').slice(0, 7) }; };
+const props = (m) => ({ keikan: '1', date: m.date, amount: String(m.amount), cat: m.cat, vendor: m.vendor, ym: m.ym, ...(m.kind ? { kind: m.kind } : {}) });
+const toRec = (f) => { const p = f.appProperties || {}; return { id: f.id, name: f.name, mime: f.mimeType, date: p.date || '', amount: +p.amount || 0, cat: p.cat || '', vendor: p.vendor || '', ym: p.ym || (p.date || '').slice(0, 7), kind: p.kind || '' }; };
 const FIELDS = 'id,name,mimeType,appProperties';
 
 const Drive = {
@@ -110,8 +112,15 @@ const Drive = {
   },
   async create(blob, mime, name, m) {
     const fid = await this.monthFolder(m.ym);
-    const B = 'kk' + Date.now();
     const meta = JSON.stringify({ name, parents: [fid], appProperties: props(m) });
+    if (blob.size > 4 * 1024 * 1024) {
+      const r = await this.api(`${UPLOAD}/files?uploadType=resumable&fields=${FIELDS}`, { method: 'POST', headers: { 'Content-Type': 'application/json; charset=UTF-8', 'X-Upload-Content-Type': mime }, body: meta });
+      const loc = r.headers.get('Location'); if (!loc) throw new Error('resumable');
+      const up = await fetch(loc, { method: 'PUT', headers: { 'Content-Type': mime }, body: blob });
+      if (!up.ok) throw new Error('upload ' + up.status);
+      return toRec(await up.json());
+    }
+    const B = 'kk' + Date.now();
     const body = new Blob([`--${B}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${meta}\r\n--${B}\r\nContent-Type: ${mime}\r\n\r\n`, blob, `\r\n--${B}--`]);
     return toRec(await this.j(`${UPLOAD}/files?uploadType=multipart&fields=${FIELDS}`, { method: 'POST', headers: { 'Content-Type': 'multipart/related; boundary=' + B }, body }));
   },
@@ -235,12 +244,14 @@ const inMonth = (ym) => S.files.filter((f) => f.ym === ym).sort((a, b) => (a.dat
 const safe = (s) => String(s).replace(/[\\/:*?"<>|]/g, '');
 function uniqueName(cat, amount, ext, ym, exceptId) {
   const used = new Set(S.files.filter((f) => f.ym === ym && f.id !== exceptId).map((f) => f.name));
-  const base = `${safe(cat)}_${amount}`;
-  let name = `${base}.${ext}`, i = 0;
-  while (used.has(name)) name = `${base}(${++i}).${ext}`;
+  const base = amount > 0 ? `${safe(cat)}_${amount}` : safe(cat);
+  const dot = ext ? '.' + ext : '';
+  let name = base + dot, i = 0;
+  while (used.has(name)) name = `${base}(${++i})${dot}`;
   return name;
 }
-const extOf = (f) => (f.name.match(/\.([^.]+)$/) || [, f.mime === 'application/pdf' ? 'pdf' : 'jpg'])[1];
+const extOf = (f) => { const m = f.name.match(/\.([A-Za-z0-9]{1,8})$/); return m ? m[1].toLowerCase() : f.mime === 'application/pdf' ? 'pdf' : /^image\//.test(f.mime) ? 'jpg' : ''; };
+const kindOf = (mime) => (mime === 'application/pdf' ? 'pdf' : /^image\/(jpeg|png|gif|webp)$/.test(mime) ? 'image' : 'file');
 function customCats() { try { return JSON.parse(localStorage.getItem('kk_cats')) || []; } catch (e) { return []; } }
 function allCats() {
   const count = {}; S.files.forEach((f) => { count[f.cat] = (count[f.cat] || 0) + 1; });
@@ -297,17 +308,17 @@ function viewYear() {
 function viewMonth() {
   const list = inMonth(S.ym), total = sum(list), by = {};
   list.forEach((f) => { by[f.cat] = (by[f.cat] || 0) + f.amount; });
-  const cats = Object.entries(by).sort((a, b) => b[1] - a[1]);
+  const cats = Object.entries(by).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
   let acc = 0;
   const stops = cats.map(([, v], i) => { const from = acc; acc += v / total * 100; return `${PIE[i % PIE.length]} ${from}% ${acc}%`; }).join(',');
   return `<div class="head"><button class="mincho" style="display:flex;align-items:center;gap:8px;padding:0;border:0;background:transparent;font-size:22px;min-height:44px" data-act="dest" data-mode="month">${ymLabel(S.ym)}${ICON.down}</button><span class="sub">月別サマリ</span></div><div class="rule"></div>
-  ${list.length ? `<div class="pie"><div class="disc" role="img" aria-label="カテゴリ別の円グラフ" style="background:conic-gradient(${stops})"></div>
-  <div class="legend">${cats.map(([c, v], i) => `<div><i style="background:${PIE[i % PIE.length]}"></i><span>${esc(c)}</span><b>${Math.round(v / total * 100)}%</b></div>`).join('')}</div></div>
+  ${list.length ? `${total > 0 ? `<div class="pie"><div class="disc" role="img" aria-label="カテゴリ別の円グラフ" style="background:conic-gradient(${stops})"></div>
+  <div class="legend">${cats.map(([c, v], i) => `<div><i style="background:${PIE[i % PIE.length]}"></i><span>${esc(c)}</span><b>${Math.round(v / total * 100)}%</b></div>`).join('')}</div></div>` : ''}
   <div class="total"><div class="mute">合計　${list.length}件</div><div class="mincho">${yen(total)}</div></div>
   <div class="list">${list.map((f) => rowHtml(f, false)).join('')}</div>` : '<div class="empty">登録なし</div>'}`;
 }
 
-const rowHtml = (f, byName) => `<button class="row" data-act="edit" data-id="${f.id}"><span class="d">${f.date ? dLabel(f.date) : ''}</span><span class="t"><b>${esc(byName ? f.name : f.cat)}</b><small>${esc(byName ? f.vendor : f.vendor)}</small></span><span class="a">${yen(f.amount)}</span></button>`;
+const rowHtml = (f, byName) => `<button class="row" data-act="edit" data-id="${f.id}"><span class="d">${f.date ? dLabel(f.date) : ''}</span><span class="t"><b>${esc(byName ? f.name : f.cat)}</b><small>${esc(byName ? f.vendor : f.vendor)}</small></span><span class="a">${yenOr(f.amount)}</span></button>`;
 
 function viewRegister() {
   const y = S.regYear;
@@ -316,7 +327,8 @@ function viewRegister() {
     return `<button class="mrow" data-act="folder" data-ym="${ym}"><b>${m}月</b>${l.length ? `<span class="c">${l.length}件</span><span class="s">${yen(sum(l))}</span>` : '<span class="none">登録なし</span>'}</button>`;
   }).join('');
   return `<div class="head"><h1 class="mincho">登録</h1></div><div class="rule"></div>
-  <div class="two"><label class="tile fill" for="cam">${ICON.cam}撮影する</label><label class="tile" for="pick">${ICON.up}写真・PDFを選ぶ</label></div>
+  <div class="two"><label class="tile fill" for="cam">${ICON.cam}撮影する</label><label class="tile" for="pick">${ICON.up}写真・ファイルを選ぶ</label></div>
+  ${CAN_DIR ? `<label class="tile sm" for="dir" style="margin-top:12px">${ICON.folder}フォルダを選ぶ</label>` : ''}
   <div class="switch" style="margin-top:18px"><button class="round" data-act="regYear" data-d="-1" aria-label="前の年">${ICON.left}</button><div class="cur mincho">${y}年</div><button class="round" data-act="regYear" data-d="1" aria-label="次の年" ${y >= THIS_YEAR ? 'disabled' : ''}>${ICON.right}</button></div>
   <div class="list">${rows}</div>`;
 }
@@ -325,29 +337,33 @@ function viewFolder(v) {
   const list = inMonth(v.ym), all = list.length > 0 && list.every((f) => S.sel.has(f.id));
   const rows = list.map((f) => S.selecting
     ? `<label class="row"><input type="checkbox" data-chk="${f.id}" ${S.sel.has(f.id) ? 'checked' : ''}><span class="t"><b>${esc(f.name)}</b><small>${f.date ? dLabel(f.date) : ''}　${esc(f.vendor)}</small></span></label>`
-    : `<button class="row" data-act="edit" data-id="${f.id}"><span class="t"><b>${esc(f.name)}</b><small>${f.date ? dLabel(f.date) : ''}　${esc(f.vendor)}</small></span><span class="a">${yen(f.amount)}</span></button>`).join('');
+    : `<button class="row" data-act="edit" data-id="${f.id}"><span class="t"><b>${esc(f.name)}</b><small>${f.date ? dLabel(f.date) : ''}　${esc(f.vendor)}</small></span><span class="a">${yenOr(f.amount)}</span></button>`).join('');
   return `<div class="head"><div style="display:flex;align-items:center"><button class="iconbtn" data-act="closeFolder" aria-label="戻る">${ICON.left}</button><h1 class="mincho" style="font-size:22px">${ymLabel(v.ym)}</h1></div>
   ${list.length ? `<button class="textbtn" data-act="select">${S.selecting ? '完了' : '選択'}</button>` : ''}</div><div class="rule"></div>
   <button class="primary h48" style="margin-top:18px" data-act="zip" ${list.length ? '' : 'disabled'}>${ICON.zip}ZIP作成</button>
   ${S.selecting ? `<div class="all"><label><input type="checkbox" data-all ${all ? 'checked' : ''}>すべて選択</label><span class="mute">${list.length}件中 ${S.sel.size}件を選択</span></div>`
-    : `<div class="two" style="margin-top:12px"><label class="tile sm" for="cam">${ICON.cam}撮影する</label><label class="tile sm" for="pick">${ICON.up}写真・PDFを選ぶ</label></div>`}
+    : `<div class="two" style="margin-top:12px"><label class="tile sm" for="cam">${ICON.cam}撮影する</label><label class="tile sm" for="pick">${ICON.up}写真・ファイルを選ぶ</label></div>${CAN_DIR ? `<label class="tile sm" for="dir" style="margin-top:12px">${ICON.folder}フォルダを選ぶ</label>` : ''}`}
   <div class="list">${rows || '<div class="empty">登録なし</div>'}</div>`;
 }
 
-function detailOk(v) { return !!(v.date && v.amount > 0 && v.cat); }
+// 金額はフォルダ・ファイル（写真・PDF以外）のとき任意
+const amountOptional = (v) => v.kind === 'folder' || kindOf(v.mime) === 'file';
+const yenOr = (n) => (n > 0 ? yen(n) : '—');
+function detailOk(v) { return !!(v.date && v.cat && (v.amount > 0 || amountOptional(v))); }
 function detailName(v) {
-  if (!(v.cat && v.amount > 0)) return '';
+  if (!(v.cat && (v.amount > 0 || amountOptional(v)))) return '';
   const ym = v.id ? (v.date.slice(0, 7) !== v.orig.date.slice(0, 7) && v.date ? v.date.slice(0, 7) : v.orig.ym) : (v.date || THIS_YM).slice(0, 7);
   return uniqueName(v.cat, v.amount, v.ext, ym, v.id);
 }
 function viewDetail(v) {
-  const miss = (k) => (v.isNew && !v.read[k] ? ' miss' : '');
-  const hint = (k) => (!v.isNew ? '' : v.read[k] ? '<div class="hint">読み取った内容です。領収書と同じか確認してください。</div>' : '<div class="hint">読み取れませんでした。入力してください。</div>');
+  const opt = amountOptional(v);
+  const miss = (k) => (v.isNew && !v.read[k] && !(k === 'amount' && opt) ? ' miss' : '');
+  const hint = (k) => (!v.isNew || (k === 'amount' && opt) ? '' : v.read[k] ? '<div class="hint">読み取った内容です。領収書と同じか確認してください。</div>' : v.kind === 'folder' ? '<div class="hint">フォルダは自動で読み取りません。入力してください。</div>' : v.other ? '<div class="hint">このファイルは自動で読み取りません。入力してください。</div>' : '<div class="hint">読み取れませんでした。入力してください。</div>');
   return `<div class="head"><div style="display:flex;align-items:center"><button class="iconbtn" data-act="closeDetail" aria-label="戻る">${ICON.left}</button><h1 class="mincho" style="font-size:20px">${v.isNew ? '読み取り内容の確認' : '取引詳細'}</h1></div></div><div class="rule"></div>
   <div class="preview" id="preview"><p class="mute">読み込み中…</p></div>
   <div class="mute" style="margin-top:8px;display:flex;justify-content:space-between;gap:12px"><span>保存名　<span id="fname">${esc(detailName(v))}</span></span><a id="openfull" class="full" target="_blank" rel="noopener" hidden>全画面で見る</a></div>
   <div class="field${miss('date')}"><label for="f-date">取引日</label><input id="f-date" type="date" data-f="date" value="${esc(v.date)}" max="${THIS_YEAR + 1}-12-31">${hint('date')}</div>
-  <div class="field${miss('amount')}"><label for="f-amount">金額（円）</label><input id="f-amount" type="text" inputmode="numeric" data-f="amount" value="${v.amount ? v.amount : ''}" placeholder="例：3300">${hint('amount')}</div>
+  <div class="field${miss('amount')}"><label for="f-amount">金額（円）${opt ? '（任意）' : ''}</label><input id="f-amount" type="text" inputmode="numeric" data-f="amount" value="${v.amount ? v.amount : ''}" placeholder="例：3300">${hint('amount')}</div>
   <div class="field"><label id="l-cat">カテゴリ</label><button class="sel" aria-labelledby="l-cat" data-act="cat"><span>${v.cat ? esc(v.cat) : '選んでください'}</span>${ICON.down}</button></div>
   <div class="field"><label for="f-vendor">取引先（任意）</label><input id="f-vendor" type="text" data-f="vendor" list="vendors" maxlength="30" value="${esc(v.vendor)}" placeholder="例：Amazon"><datalist id="vendors">${vendors().map((x) => `<option value="${esc(x)}">`).join('')}</datalist></div>
   <div style="margin-top:24px"><button class="primary" id="save" data-act="save" ${detailOk(v) ? '' : 'disabled'}>保存する</button>
@@ -359,8 +375,18 @@ async function loadPreview(v) {
     if (!v.src) v.src = v.blob || await Store.download(v.orig);
     if (!v.url) v.url = URL.createObjectURL(v.src);
     const el = $('#preview'); if (!el || S.view !== v) return;
-    const full = $('#openfull'); if (full) { full.href = v.url; full.hidden = false; }
-    if (v.mime !== 'application/pdf') { el.innerHTML = `<img src="${v.url}" alt="領収書の画像">`; return; }
+    if (v.kind === 'folder') {
+      const full = $('#openfull'); if (full) { full.href = v.url; full.hidden = false; full.textContent = 'ZIPで開く'; full.download = v.orig ? v.orig.name : 'folder.zip'; }
+      const names = window.JSZip ? Object.values((await JSZip.loadAsync(v.src)).files).filter((e) => !e.dir).map((e) => e.name) : [];
+      if (S.view !== v || !el.isConnected) return;
+      el.innerHTML = `<div class="fileprev">${ICON.folder.replace(/20/g, '40')}<b>${esc(v.orig ? v.orig.name.replace(/\.zip$/i, '') : v.folderName || 'フォルダ')}</b><span class="mute">フォルダ・${names.length}件のファイル</span></div><ul class="flist">${names.slice(0, 100).map((n) => `<li>${esc(n)}</li>`).join('')}</ul>`;
+      return;
+    }
+    const kind = kindOf(v.mime), fname = v.orig ? v.orig.name : (v.blob && v.blob.name) || 'file';
+    const full = $('#openfull');
+    if (full) { full.href = v.url; full.hidden = false; if (kind === 'file') { full.textContent = 'ファイルを開く'; full.download = fname; } }
+    if (kind === 'file') { el.innerHTML = `<div class="fileprev">${ICON.doc}<b>${esc(fname)}</b><span class="mute">このファイルは画面で表示できません。「ファイルを開く」で確認してください。</span></div>`; return; }
+    if (kind === 'image') { el.innerHTML = `<img src="${v.url}" alt="領収書の画像" onerror="this.outerHTML='<p class=&quot;mute&quot;>この画像は画面で表示できません。「全画面で見る」で確認してください。</p>'">`; return; }
     if (!window.pdfjsLib) { el.innerHTML = '<p class="mute">「全画面で見る」から開いてください</p>'; return; }
     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
     const pdf = await pdfjsLib.getDocument({ data: await v.src.arrayBuffer() }).promise;
@@ -416,31 +442,56 @@ async function readCanvas(cv) {
   return { blob, mime: 'image/jpeg', ext: 'jpg', date: parseDate(t), amount: parseAmount(t) };
 }
 function openDetail(r, back) {
-  S.view = { type: 'detail', isNew: true, back, blob: r.blob, mime: r.mime, ext: r.ext, date: r.date, amount: r.amount || 0, cat: '', vendor: '', read: { date: !!r.date, amount: !!r.amount } };
+  S.view = { type: 'detail', isNew: true, back, blob: r.blob, mime: r.mime, ext: r.ext, other: !!r.other, kind: r.kind || '', date: r.date, amount: r.amount || 0, cat: '', vendor: '', read: { date: !!r.date, amount: !!r.amount } };
   closeSheet(); render();
-  if (!r.date && !r.amount) msg('文字が不鮮明なため読み取れませんでした。\n手入力してください。');
+  if (!r.other && !r.date && !r.amount) msg('文字が不鮮明なため読み取れませんでした。\n手入力してください。');
 }
 async function readAndOpen(cv, back) {
   busy('読み取り中…');
   try { openDetail(await readCanvas(cv), back); }
   catch (e) { console.error(e); msg('読み取りに失敗しました。\nもう一度お試しください。'); }
 }
+const MAX_MB = 50;
+const CAN_DIR = 'webkitdirectory' in document.createElement('input') && matchMedia('(pointer: fine)').matches;
+async function handleFolder(list) {
+  const files = [...list].filter((f) => !/^\.|\/\./.test(f.webkitRelativePath || f.name));   // 隠しファイルは除く
+  if (!files.length) { msg('フォルダの中にファイルがありません。'); return; }
+  if (files.reduce((a, f) => a + f.size, 0) > MAX_MB * 1024 * 1024) { msg(`フォルダが大きすぎます（合計${MAX_MB}MBまで）。`); return; }
+  if (!window.JSZip) { msg('ZIP の部品を読み込めませんでした。\n通信環境を確認して、開き直してください。'); return; }
+  S.selecting = false; S.sel.clear();
+  busy(`フォルダを読み込み中…（${files.length}件）`);
+  try {
+    const top = (files[0].webkitRelativePath || '').split('/')[0] || 'フォルダ';
+    const z = new JSZip(), paths = [];
+    for (const f of files) { const pth = (f.webkitRelativePath || f.name).split('/').slice(1).join('/') || f.name; z.file(pth, f); paths.push(pth); }
+    const blob = new File([await z.generateAsync({ type: 'blob' })], top + '.zip', { type: 'application/zip' });
+    openDetail({ blob, mime: 'application/zip', ext: 'zip', other: true, kind: 'folder', date: '', amount: 0 }, S.view);
+    S.view.folderName = top;
+  } catch (e) { console.error(e); msg('フォルダを読み込めませんでした。\nもう一度お試しください。'); }
+}
+function asFile(file) {
+  const ext = extOf({ name: file.name, mime: file.type });
+  return { blob: file, mime: file.type || 'application/octet-stream', ext, date: '', amount: 0, other: true };
+}
 async function handleFile(file) {
   if (!file) return;
   S.selecting = false; S.sel.clear();
+  if (file.size > MAX_MB * 1024 * 1024) { msg(`ファイルが大きすぎます（${MAX_MB}MBまで）。`); return; }
   const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
+  const isImg = /^image\//.test(file.type) || /\.(jpe?g|png|gif|webp|heic|heif)$/i.test(file.name);
   if (isPdf) {
     busy('読み取り中…');
     try { openDetail(await readReceipt(file), S.view); }
-    catch (e) { console.error(e); msg('このファイルは開けませんでした。\n写真または PDF を選んでください。'); }
+    catch (e) { console.error(e); openDetail(asFile(file), S.view); }
     return;
   }
+  if (!isImg) { openDetail(asFile(file), S.view); return; }
   busy('画像を開いています…');
   try {
     const cv = await imageCanvas(file);
     S.view = { type: 'crop', cv, back: S.view, box: { x: 0.06, y: 0.06, w: 0.88, h: 0.88 } };
     closeSheet(); render();
-  } catch (e) { console.error(e); msg('このファイルは開けませんでした。\n写真または PDF を選んでください。'); }
+  } catch (e) { console.error(e); openDetail(asFile(file), S.view); }   // 開けない画像形式はファイルのまま保存
 }
 
 /* ---------- 切り取り（範囲を選ぶ） ---------- */
@@ -509,7 +560,7 @@ const actions = {
   select() { S.selecting = !S.selecting; S.sel.clear(); render(); },
   edit(d) {
     const f = S.files.find((x) => x.id === d.id); if (!f) return;
-    S.view = { type: 'detail', isNew: false, id: f.id, orig: f, back: S.view, mime: f.mime, ext: extOf(f), date: f.date, amount: f.amount, cat: f.cat, vendor: f.vendor, read: {} };
+    S.view = { type: 'detail', isNew: false, id: f.id, orig: f, back: S.view, mime: f.mime, ext: extOf(f), kind: f.kind || '', date: f.date, amount: f.amount, cat: f.cat, vendor: f.vendor, read: {} };
     render();
   },
   closeCrop() { S.view = S.view.back || null; render(); },
@@ -529,7 +580,7 @@ const actions = {
   },
   async save() {
     const v = S.view; if (!detailOk(v)) return;
-    const m = { date: v.date, amount: v.amount, cat: v.cat, vendor: v.vendor.trim() };
+    const m = { date: v.date, amount: v.amount, cat: v.cat, vendor: v.vendor.trim(), kind: v.kind || '' };
     busy('保存中…');
     try {
       if (v.isNew) {
@@ -556,7 +607,7 @@ const actions = {
     const n = S.sel.size;
     const ok = await eachSelected(mode === 'move' ? '移動中…' : 'コピー中…', async (f) => {
       const name = uniqueName(f.cat, f.amount, extOf(f), ym, mode === 'move' ? f.id : undefined);
-      if (mode === 'move') S.files[S.files.indexOf(f)] = await Store.update(f, name, { date: f.date, amount: f.amount, cat: f.cat, vendor: f.vendor, ym });
+      if (mode === 'move') S.files[S.files.indexOf(f)] = await Store.update(f, name, { date: f.date, amount: f.amount, cat: f.cat, vendor: f.vendor, kind: f.kind, ym });
       else S.files.push(await Store.copy(f, name, ym));
     });
     if (ok) { render(); msg(`${n}件を${ymLabel(ym)}へ${mode === 'move' ? '移動' : 'コピー'}しました。`); }
@@ -573,7 +624,13 @@ const actions = {
     busy(`ZIP作成中…（${list.length}件）`);
     try {
       const z = new JSZip();
-      for (const f of list) z.file(f.name, await Store.download(f));
+      for (const f of list) {
+        const blob = await Store.download(f);
+        if (f.kind === 'folder') {
+          const inner = await JSZip.loadAsync(blob), dir = f.name.replace(/\.zip$/i, '');
+          for (const e of Object.values(inner.files)) if (!e.dir) z.file(`${dir}/${e.name}`, await e.async('blob'));
+        } else z.file(f.name, blob);
+      }
       const blob = await z.generateAsync({ type: 'blob' });
       const file = new File([blob], `keikan_${ymLabel(ym)}.zip`, { type: 'application/zip' });
       S.sheet = { type: 'zip', file, url: URL.createObjectURL(file) }; renderSheet();
@@ -597,6 +654,7 @@ document.addEventListener('input', (e) => {
 });
 document.addEventListener('change', (e) => {
   const t = e.target;
+  if (t.id === 'dir') { const fs = [...t.files]; t.value = ''; handleFolder(fs); return; }
   if (t.id === 'cam' || t.id === 'pick') { const f = t.files[0]; t.value = ''; handleFile(f); return; }
   if (t.dataset.chk) { t.checked ? S.sel.add(t.dataset.chk) : S.sel.delete(t.dataset.chk); render(); }
   if ('all' in t.dataset) { const l = inMonth(S.view.ym); S.sel = new Set(t.checked ? l.map((f) => f.id) : []); render(); }
