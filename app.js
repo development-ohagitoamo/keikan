@@ -350,10 +350,17 @@ function viewFolder(v) {
 const amountOptional = (v) => v.kind === 'folder' || kindOf(v.mime) === 'file';
 const yenOr = (n) => (n > 0 ? yen(n) : '—');
 function detailOk(v) { return !!(v.date && v.cat && (v.amount > 0 || amountOptional(v))); }
+// 保存先：年月フォルダから登録したときはその年月（取引日は関係なし）。それ以外は取引日の年月。
+// 修正時は、取引日の年月に入っていた取引だけ取引日に合わせて移し、指定した年月に入れた取引は今の場所のまま。
+function destYm(v) {
+  if (v.isNew) return v.fixedYm || (v.date || THIS_YM).slice(0, 7);
+  const auto = v.orig.ym === (v.orig.date || '').slice(0, 7);
+  return auto && v.date ? v.date.slice(0, 7) : v.orig.ym;
+}
+const destText = (v) => `保存先　${ymLabel(destYm(v))}${v.isNew && v.fixedYm ? '（選んだ年月）' : v.isNew ? '（取引日の年月）' : ''}`;
 function detailName(v) {
   if (!(v.cat && (v.amount > 0 || amountOptional(v)))) return '';
-  const ym = v.id ? (v.date.slice(0, 7) !== v.orig.date.slice(0, 7) && v.date ? v.date.slice(0, 7) : v.orig.ym) : (v.date || THIS_YM).slice(0, 7);
-  return uniqueName(v.cat, v.amount, v.ext, ym, v.id);
+  return uniqueName(v.cat, v.amount, v.ext, destYm(v), v.id);
 }
 function viewDetail(v) {
   const opt = amountOptional(v);
@@ -367,7 +374,7 @@ function viewDetail(v) {
   <div class="field"><label id="l-cat">カテゴリ</label><button class="sel" aria-labelledby="l-cat" data-act="cat"><span>${v.cat ? esc(v.cat) : '選んでください'}</span>${ICON.down}</button></div>
   <div class="field"><label for="f-vendor">取引先（任意）</label><input id="f-vendor" type="text" data-f="vendor" list="vendors" maxlength="30" value="${esc(v.vendor)}" placeholder="例：Amazon"><datalist id="vendors">${vendors().map((x) => `<option value="${esc(x)}">`).join('')}</datalist></div>
   <div style="margin-top:24px"><button class="primary" id="save" data-act="save" ${detailOk(v) ? '' : 'disabled'}>保存する</button>
-  <div class="mute" style="text-align:center;margin-top:10px" id="dest"></div></div>`;
+  <div class="mute" style="text-align:center;margin-top:10px" id="dest">${esc(destText(v))}</div></div>`;
 }
 async function loadPreview(v) {
   const fail = (e) => { const el = $('#preview'); if (el) el.innerHTML = `<p class="mute">${e && e.auth ? 'ログインし直すと表示されます' : '表示できませんでした'}</p>`; };
@@ -442,7 +449,7 @@ async function readCanvas(cv) {
   return { blob, mime: 'image/jpeg', ext: 'jpg', date: parseDate(t), amount: parseAmount(t) };
 }
 function openDetail(r, back) {
-  S.view = { type: 'detail', isNew: true, back, blob: r.blob, mime: r.mime, ext: r.ext, other: !!r.other, kind: r.kind || '', date: r.date, amount: r.amount || 0, cat: '', vendor: '', read: { date: !!r.date, amount: !!r.amount } };
+  S.view = { type: 'detail', isNew: true, back, fixedYm: back && back.type === 'folder' ? back.ym : '', blob: r.blob, mime: r.mime, ext: r.ext, other: !!r.other, kind: r.kind || '', date: r.date, amount: r.amount || 0, cat: '', vendor: '', read: { date: !!r.date, amount: !!r.amount } };
   closeSheet(); render();
   if (!r.other && !r.date && !r.amount) msg('文字が不鮮明なため読み取れませんでした。\n手入力してください。');
 }
@@ -584,10 +591,10 @@ const actions = {
     busy('保存中…');
     try {
       if (v.isNew) {
-        m.ym = v.date.slice(0, 7);
+        m.ym = destYm(v);
         S.files.push(await Store.create(v.blob, v.mime, uniqueName(m.cat, m.amount, v.ext, m.ym), m));
       } else {
-        m.ym = v.date.slice(0, 7) !== v.orig.date.slice(0, 7) ? v.date.slice(0, 7) : v.orig.ym;
+        m.ym = destYm(v);
         const rec = await Store.update(v.orig, uniqueName(m.cat, m.amount, v.ext, m.ym, v.id), m);
         S.files[S.files.findIndex((x) => x.id === v.id)] = rec;
       }
@@ -651,6 +658,7 @@ document.addEventListener('input', (e) => {
   else v[t.dataset.f] = t.value;
   $('#save').disabled = !detailOk(v);
   $('#fname').textContent = detailName(v);
+  $('#dest').textContent = destText(v);
 });
 document.addEventListener('change', (e) => {
   const t = e.target;
