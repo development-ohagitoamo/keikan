@@ -72,8 +72,8 @@ const Auth = {
 };
 
 /* ---------- 保存先：Google ドライブ ---------- */
-const props = (m) => ({ keikan: '1', date: m.date, amount: String(m.amount), cat: m.cat, vendor: m.vendor, ym: m.ym, ...(m.kind ? { kind: m.kind } : {}), ...(m.title ? { title: m.title } : {}) });
-const toRec = (f) => { const p = f.appProperties || {}; return { id: f.id, name: f.name, mime: f.mimeType, date: p.date || '', amount: +p.amount || 0, cat: p.cat || '', vendor: p.vendor || '', ym: p.ym || (p.date || '').slice(0, 7), kind: p.kind || '', title: p.title || '' }; };
+const props = (m) => ({ keikan: '1', date: m.date, amount: String(m.amount), cat: m.cat, vendor: m.vendor, ym: m.ym, ...(m.kind ? { kind: m.kind } : {}), ...(m.title ? { title: m.title } : {}), ...(m.fixed ? { fixed: m.fixed } : {}) });
+const toRec = (f) => { const p = f.appProperties || {}; return { id: f.id, name: f.name, mime: f.mimeType, date: p.date || '', amount: +p.amount || 0, cat: p.cat || '', vendor: p.vendor || '', ym: p.ym || (p.date || '').slice(0, 7), kind: p.kind || '', title: p.title || '', fixed: p.fixed || '' }; };
 const FIELDS = 'id,name,mimeType,appProperties';
 
 const Drive = {
@@ -132,9 +132,9 @@ const Drive = {
     }
     return toRec(await this.j(`${API}/files/${rec.id}?${qs}`, this.json('PATCH', { name, appProperties: props(m) })));
   },
-  async copy(rec, name, ym) {
+  async copy(rec, name, ym, over = {}) {
     const fid = await this.monthFolder(ym);
-    return toRec(await this.j(`${API}/files/${rec.id}/copy?fields=${FIELDS}`, this.json('POST', { name, parents: [fid], appProperties: props({ ...rec, ym }) })));
+    return toRec(await this.j(`${API}/files/${rec.id}/copy?fields=${FIELDS}`, this.json('POST', { name, parents: [fid], appProperties: props({ ...rec, ...over, ym }) })));
   },
   async trash(rec) { await this.api(`${API}/files/${rec.id}`, this.json('PATCH', { trashed: true })); },
   async download(rec) { return (await this.api(`${API}/files/${rec.id}?alt=media`)).blob(); },
@@ -153,7 +153,7 @@ const Demo = {
   },
   async create(blob, mime, name, m) { const id = 'd' + (++this.n); this.blobs[id] = blob; return { id, name, mime, ...m }; },
   async update(rec, name, m) { return { ...rec, name, ...m }; },
-  async copy(rec, name, ym) { const id = 'd' + (++this.n); this.blobs[id] = this.blobs[rec.id]; return { ...rec, id, name, ym }; },
+  async copy(rec, name, ym, over = {}) { const id = 'd' + (++this.n); this.blobs[id] = this.blobs[rec.id]; return { ...rec, ...over, id, name, ym }; },
   async trash() {},
   async download(rec) {
     if (this.blobs[rec.id]) return this.blobs[rec.id];
@@ -320,7 +320,7 @@ function viewMonth() {
   <div class="list">${list.map((f) => rowHtml(f, false)).join('')}</div>` : '<div class="empty">登録なし</div>'}`;
 }
 
-const rowHtml = (f, byName) => `<button class="row" data-act="edit" data-id="${f.id}"><span class="d">${f.date ? dLabel(f.date) : ''}</span><span class="t"><b>${esc(byName ? f.name : f.cat)}</b><small>${esc(f.vendor || f.title || '')}</small></span><span class="a">${yenOr(f.amount)}</span></button>`;
+const rowHtml = (f, byName) => `<button class="row" data-act="edit" data-id="${f.id}"><span class="d">${f.date ? dLabel(f.date) : ''}</span><span class="t"><b>${esc(byName ? f.name : f.cat)}</b><small>${f.fixed ? '毎月固定　' : ''}${esc(f.vendor || f.title || '')}</small></span><span class="a">${yenOr(f.amount)}</span></button>`;
 
 function viewRegister() {
   const y = S.regYear;
@@ -338,8 +338,8 @@ function viewRegister() {
 function viewFolder(v) {
   const list = inMonth(v.ym), all = list.length > 0 && list.every((f) => S.sel.has(f.id));
   const rows = list.map((f) => S.selecting
-    ? `<label class="row"><input type="checkbox" data-chk="${f.id}" ${S.sel.has(f.id) ? 'checked' : ''}><span class="t"><b>${esc(f.name)}</b><small>${f.date ? dLabel(f.date) : ''}　${esc(f.vendor)}</small></span></label>`
-    : `<button class="row" data-act="edit" data-id="${f.id}"><span class="t"><b>${esc(f.name)}</b><small>${f.date ? dLabel(f.date) : ''}　${esc(f.vendor)}</small></span><span class="a">${yenOr(f.amount)}</span></button>`).join('');
+    ? `<label class="row"><input type="checkbox" data-chk="${f.id}" ${S.sel.has(f.id) ? 'checked' : ''}><span class="t"><b>${esc(f.name)}</b><small>${f.date ? dLabel(f.date) : ''}　${f.fixed ? '毎月固定　' : ''}${esc(f.vendor)}</small></span></label>`
+    : `<button class="row" data-act="edit" data-id="${f.id}"><span class="t"><b>${esc(f.name)}</b><small>${f.date ? dLabel(f.date) : ''}　${f.fixed ? '毎月固定　' : ''}${esc(f.vendor)}</small></span><span class="a">${yenOr(f.amount)}</span></button>`).join('');
   return `<div class="head"><div style="display:flex;align-items:center"><button class="iconbtn" data-act="closeFolder" aria-label="戻る">${ICON.left}</button><h1 class="mincho" style="font-size:22px">${ymLabel(v.ym)}</h1></div>
   ${list.length ? `<button class="textbtn" data-act="select">${S.selecting ? '完了' : '選択'}</button>` : ''}</div><div class="rule"></div>
   <button class="primary h48" style="margin-top:18px" data-act="zip" ${list.length ? '' : 'disabled'}>${ICON.zip}ZIP作成</button>
@@ -353,7 +353,7 @@ function viewFolder(v) {
 const amountOptional = (v) => v.kind === 'folder' || kindOf(v.mime) === 'file';
 const stemOf = (f) => { const n = f.name.replace(/\.[A-Za-z0-9]{1,8}$/, ''); if (n.replace(/\(\d+\)$/, '') === f.cat) return ''; return n.startsWith(f.cat + '_') ? n.slice(f.cat.length + 1).replace(/\(\d+\)$/, '') : n; };
 const yenOr = (n) => (n > 0 ? yen(n) : '—');
-function detailOk(v) { return !!(v.date && v.cat && (amountOptional(v) ? (v.title || '').trim() : v.amount > 0)); }
+function detailOk(v) { return !!(v.date && v.cat && (amountOptional(v) ? (v.title || '').trim() : v.amount > 0)) && (v.rep !== 'monthly' || (monthsOf(v).length > 0 && monthsOf(v).length <= 60)); }
 // 保存先：年月フォルダから登録したときはその年月（取引日は関係なし）。それ以外は取引日の年月。
 // 修正時は、取引日の年月に入っていた取引だけ取引日に合わせて移し、指定した年月に入れた取引は今の場所のまま。
 function destYm(v) {
@@ -361,7 +361,16 @@ function destYm(v) {
   const auto = v.orig.ym === (v.orig.date || '').slice(0, 7);
   return auto && v.date ? v.date.slice(0, 7) : v.orig.ym;
 }
-const destText = (v) => `保存先　${ymLabel(destYm(v))}${v.isNew && v.fixedYm ? '（選んだ年月）' : v.isNew ? '（取引日の年月）' : ''}`;
+// 毎月固定：反映期間の年月を並べる（最大60か月）
+const addYm = (ym, n) => { const d = new Date(+ym.slice(0, 4), +ym.slice(5) - 1 + n, 1); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`; };
+function monthsOf(v) {
+  if (v.rep !== 'monthly' || !/^\d{4}-\d{2}$/.test(v.from || '') || !/^\d{4}-\d{2}$/.test(v.to || '') || v.to < v.from) return [];
+  const out = []; for (let ym = v.from; ym <= v.to && out.length <= 60; ym = addYm(ym, 1)) out.push(ym);
+  return out;
+}
+// 取引日の「日」を残したまま、別の月の日付にする（31日→30日などは月末に合わせる）
+const dateIn = (date, ym) => { const day = +(date || '').slice(8) || 1, last = new Date(+ym.slice(0, 4), +ym.slice(5), 0).getDate(); return `${ym}-${pad(Math.min(day, last))}`; };
+const destText = (v) => v.rep === 'monthly' ? (() => { const ms = monthsOf(v); return ms.length > 60 ? '反映期間は最大60か月です' : ms.length ? `保存先　${ymLabel(ms[0])}〜${ymLabel(ms[ms.length - 1])}（${ms.length}か月）` : '反映期間を正しく選んでください'; })() : `保存先　${ymLabel(destYm(v))}${v.isNew && v.fixedYm ? '（選んだ年月）' : v.isNew ? '（取引日の年月）' : ''}`;
 function detailName(v) {
   if (!detailOk({ ...v, date: v.date || 'x' })) return '';
   return uniqueName(v, v.ext, destYm(v), v.id);
@@ -378,6 +387,11 @@ function viewDetail(v) {
     : `<div class="field${miss('amount')}"><label for="f-amount">金額（円）</label><input id="f-amount" type="text" inputmode="numeric" data-f="amount" value="${v.amount ? v.amount : ''}" placeholder="例：3300">${hint('amount')}</div>`}
   <div class="field"><label id="l-cat">カテゴリ</label><button class="sel" aria-labelledby="l-cat" data-act="cat"><span>${v.cat ? esc(v.cat) : '選んでください'}</span>${ICON.down}</button></div>
   <div class="field"><label for="f-vendor">取引先（任意）</label><input id="f-vendor" type="text" data-f="vendor" list="vendors" maxlength="30" value="${esc(v.vendor)}" placeholder="例：Amazon"><datalist id="vendors">${vendors().map((x) => `<option value="${esc(x)}">`).join('')}</datalist></div>
+  <fieldset class="field rep"><legend>登録のしかた</legend>
+    <div class="radios"><label><input type="radio" name="rep" value="once" ${v.rep === 'monthly' ? '' : 'checked'}>今回のみ</label><label><input type="radio" name="rep" value="monthly" ${v.rep === 'monthly' ? 'checked' : ''}>毎月固定の経費</label></div>
+    ${v.rep === 'monthly' ? `<div class="period"><div><label for="f-from">反映期間（開始）</label><input id="f-from" type="month" data-f="from" value="${esc(v.from || '')}"></div><span>〜</span><div><label for="f-to">反映期間（終了）</label><input id="f-to" type="month" data-f="to" value="${esc(v.to || '')}"></div></div>
+    <div class="hint" style="color:var(--mute)">期間内の毎月に、同じ内容で登録します（最大60か月）。取引日は各月の同じ日にします。${v.isNew ? '' : 'この取引は今の月のまま残し、ほかの月にコピーを作ります。'}</div>` : ''}
+  </fieldset>
   <div style="margin-top:24px"><button class="primary" id="save" data-act="save" ${detailOk(v) ? '' : 'disabled'}>保存する</button>
   <div class="mute" style="text-align:center;margin-top:10px" id="dest">${esc(destText(v))}</div></div>`;
 }
@@ -425,11 +439,10 @@ function renderSheet() {
   else if (s.type === 'confirm') el.innerHTML = card(`<p>${esc(s.text)}</p><div class="btns"><button class="ghost" data-act="closeSheet">キャンセル</button><button class="primary h48" data-act="doDelete">削除する</button></div>`);
   else if (s.type === 'zip') {
     // PC（Chrome・Edge）：保存先を選ぶ画面で保存。スマホ：共有シート（保存先・共有先を選べる）
-    const pc = !!window.showSaveFilePicker && matchMedia('(pointer: fine)').matches;
-    const btn = pc ? '<button class="primary h48" data-act="pickSave">保存先を選んで保存</button>'
-      : navigator.share ? '<button class="primary h48" data-act="share">保存先・共有先を選ぶ</button>' : '';
+    const btn = !IS_MOBILE && window.showSaveFilePicker ? '<button class="primary h48" data-act="pickSave">保存先を選んで保存</button>'
+      : IS_MOBILE && navigator.share ? '<button class="primary h48" data-act="share">保存先・共有先を選ぶ</button>' : '';
     const info = s.note ? `<p class="mute" style="font-size:13px;color:#6E561F">${esc(s.note)}</p>`
-      : btn ? '' : '<p class="mute" style="font-size:13px">このブラウザは共有に対応していません。保存してから送ってください。</p>';
+      : btn ? '' : IS_MOBILE ? '<p class="mute" style="font-size:13px">このブラウザは共有に対応していません。保存してから送ってください。</p>' : '<p class="mute" style="font-size:13px">「この端末に保存」でダウンロードフォルダに保存されます。</p>';
     el.innerHTML = card(`<p>${esc(s.file.name)}\nを作成しました。</p>${btn}<a class="ghost" href="${s.url}" download="${esc(s.file.name)}">この端末に保存</a>${info}<button class="textbtn" data-act="closeSheet">閉じる</button>`);
   }
   else if (s.type === 'dest') {
@@ -472,6 +485,8 @@ async function readAndOpen(cv, back) {
   catch (e) { console.error(e); msg('読み取りに失敗しました。\nもう一度お試しください。'); }
 }
 const MAX_MB = 50;
+// スマホ・タブレット（共有シートが使える端末）かどうか
+const IS_MOBILE = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
 const CAN_DIR = 'webkitdirectory' in document.createElement('input') && matchMedia('(pointer: fine)').matches;
 async function handleFolder(list) {
   const files = [...list].filter((f) => !/^\.|\/\./.test(f.webkitRelativePath || f.name));   // 隠しファイルは除く
@@ -602,19 +617,31 @@ const actions = {
     const v = S.view; if (!detailOk(v)) return;
     const fl = amountOptional(v);
     const m = { date: v.date, amount: fl ? 0 : v.amount, cat: v.cat, vendor: v.vendor.trim(), kind: v.kind || '', title: fl ? v.title.trim() : '', mime: v.mime };
+    const months = monthsOf(v);
+    if (months.length) m.fixed = (v.orig && v.orig.fixed) || 'f' + Date.now().toString(36);
     busy('保存中…');
     try {
+      let base;
       if (v.isNew) {
-        m.ym = destYm(v);
-        S.files.push(await Store.create(v.blob, v.mime, uniqueName(m, v.ext, m.ym), m));
+        m.ym = months.length ? months[0] : destYm(v);
+        if (months.length) m.date = dateIn(v.date, m.ym);
+        base = await Store.create(v.blob, v.mime, uniqueName(m, v.ext, m.ym), m);
+        S.files.push(base);
       } else {
         m.ym = destYm(v);
-        const rec = await Store.update(v.orig, uniqueName(m, v.ext, m.ym, v.id), m);
-        S.files[S.files.findIndex((x) => x.id === v.id)] = rec;
+        base = await Store.update(v.orig, uniqueName(m, v.ext, m.ym, v.id), m);
+        S.files[S.files.findIndex((x) => x.id === v.id)] = base;
+      }
+      // 毎月固定：残りの月にコピーを作る
+      const rest = months.filter((ym) => ym !== base.ym);
+      for (let i = 0; i < rest.length; i++) {
+        busy(`毎月の経費を登録中…（${i + 2}/${rest.length + 1}）`);
+        const ym = rest[i], over = { date: dateIn(v.date, ym), fixed: m.fixed };
+        S.files.push(await Store.copy(base, uniqueName({ ...m, ...over }, v.ext, ym), ym, over));
       }
       if (v.url) URL.revokeObjectURL(v.url);
       S.view = v.back || null; render();
-      msg(`${ymLabel(m.ym)}に登録しました。`);
+      msg(months.length ? `${ymLabel(months[0])}〜${ymLabel(months[months.length - 1])}の${months.length}か月に登録しました。` : `${ymLabel(m.ym)}に登録しました。`);
     } catch (e) { fail(e); }
   },
   dest(d) {
@@ -704,6 +731,11 @@ document.addEventListener('change', (e) => {
   const t = e.target;
   if (t.id === 'dir') { const fs = [...t.files]; t.value = ''; handleFolder(fs); return; }
   if (t.id === 'cam' || t.id === 'pick') { const f = t.files[0]; t.value = ''; handleFile(f); return; }
+  if (t.name === 'rep' && S.view && S.view.type === 'detail') {
+    const v = S.view; v.rep = t.value;
+    if (v.rep === 'monthly' && !v.from) { v.from = destYm(v); v.to = addYm(v.from, 11); }
+    render(); return;
+  }
   if (t.dataset.chk) { t.checked ? S.sel.add(t.dataset.chk) : S.sel.delete(t.dataset.chk); render(); }
   if ('all' in t.dataset) { const l = inMonth(S.view.ym); S.sel = new Set(t.checked ? l.map((f) => f.id) : []); render(); }
 });
