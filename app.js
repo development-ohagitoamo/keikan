@@ -72,8 +72,8 @@ const Auth = {
 };
 
 /* ---------- 保存先：Google ドライブ ---------- */
-const props = (m) => ({ keikan: '1', date: m.date, amount: String(m.amount), cat: m.cat, vendor: m.vendor, ym: m.ym, ...(m.kind ? { kind: m.kind } : {}) });
-const toRec = (f) => { const p = f.appProperties || {}; return { id: f.id, name: f.name, mime: f.mimeType, date: p.date || '', amount: +p.amount || 0, cat: p.cat || '', vendor: p.vendor || '', ym: p.ym || (p.date || '').slice(0, 7), kind: p.kind || '' }; };
+const props = (m) => ({ keikan: '1', date: m.date, amount: String(m.amount), cat: m.cat, vendor: m.vendor, ym: m.ym, ...(m.kind ? { kind: m.kind } : {}), ...(m.title ? { title: m.title } : {}) });
+const toRec = (f) => { const p = f.appProperties || {}; return { id: f.id, name: f.name, mime: f.mimeType, date: p.date || '', amount: +p.amount || 0, cat: p.cat || '', vendor: p.vendor || '', ym: p.ym || (p.date || '').slice(0, 7), kind: p.kind || '', title: p.title || '' }; };
 const FIELDS = 'id,name,mimeType,appProperties';
 
 const Drive = {
@@ -242,9 +242,11 @@ async function readReceipt(file) {
 /* ---------- 共通処理 ---------- */
 const inMonth = (ym) => S.files.filter((f) => f.ym === ym).sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
 const safe = (s) => String(s).replace(/[\\/:*?"<>|]/g, '');
-function uniqueName(cat, amount, ext, ym, exceptId) {
+const isFileLike = (r) => r.kind === 'folder' || kindOf(r.mime) === 'file';
+function uniqueName(r, ext, ym, exceptId) {
   const used = new Set(S.files.filter((f) => f.ym === ym && f.id !== exceptId).map((f) => f.name));
-  const base = amount > 0 ? `${safe(cat)}_${amount}` : safe(cat);
+  const second = isFileLike(r) ? safe(r.title || '').trim() : r.amount > 0 ? String(r.amount) : '';
+  const base = second ? `${safe(r.cat)}_${second}` : safe(r.cat);
   const dot = ext ? '.' + ext : '';
   let name = base + dot, i = 0;
   while (used.has(name)) name = `${base}(${++i})${dot}`;
@@ -318,7 +320,7 @@ function viewMonth() {
   <div class="list">${list.map((f) => rowHtml(f, false)).join('')}</div>` : '<div class="empty">登録なし</div>'}`;
 }
 
-const rowHtml = (f, byName) => `<button class="row" data-act="edit" data-id="${f.id}"><span class="d">${f.date ? dLabel(f.date) : ''}</span><span class="t"><b>${esc(byName ? f.name : f.cat)}</b><small>${esc(byName ? f.vendor : f.vendor)}</small></span><span class="a">${yenOr(f.amount)}</span></button>`;
+const rowHtml = (f, byName) => `<button class="row" data-act="edit" data-id="${f.id}"><span class="d">${f.date ? dLabel(f.date) : ''}</span><span class="t"><b>${esc(byName ? f.name : f.cat)}</b><small>${esc(f.vendor || f.title || '')}</small></span><span class="a">${yenOr(f.amount)}</span></button>`;
 
 function viewRegister() {
   const y = S.regYear;
@@ -347,9 +349,11 @@ function viewFolder(v) {
 }
 
 // 金額はフォルダ・ファイル（写真・PDF以外）のとき任意
+// ファイル・フォルダ（写真・PDF以外）は金額の代わりに「名前」を必須にする
 const amountOptional = (v) => v.kind === 'folder' || kindOf(v.mime) === 'file';
+const stemOf = (f) => { const n = f.name.replace(/\.[A-Za-z0-9]{1,8}$/, ''); if (n.replace(/\(\d+\)$/, '') === f.cat) return ''; return n.startsWith(f.cat + '_') ? n.slice(f.cat.length + 1).replace(/\(\d+\)$/, '') : n; };
 const yenOr = (n) => (n > 0 ? yen(n) : '—');
-function detailOk(v) { return !!(v.date && v.cat && (v.amount > 0 || amountOptional(v))); }
+function detailOk(v) { return !!(v.date && v.cat && (amountOptional(v) ? (v.title || '').trim() : v.amount > 0)); }
 // 保存先：年月フォルダから登録したときはその年月（取引日は関係なし）。それ以外は取引日の年月。
 // 修正時は、取引日の年月に入っていた取引だけ取引日に合わせて移し、指定した年月に入れた取引は今の場所のまま。
 function destYm(v) {
@@ -359,8 +363,8 @@ function destYm(v) {
 }
 const destText = (v) => `保存先　${ymLabel(destYm(v))}${v.isNew && v.fixedYm ? '（選んだ年月）' : v.isNew ? '（取引日の年月）' : ''}`;
 function detailName(v) {
-  if (!(v.cat && (v.amount > 0 || amountOptional(v)))) return '';
-  return uniqueName(v.cat, v.amount, v.ext, destYm(v), v.id);
+  if (!detailOk({ ...v, date: v.date || 'x' })) return '';
+  return uniqueName(v, v.ext, destYm(v), v.id);
 }
 function viewDetail(v) {
   const opt = amountOptional(v);
@@ -370,7 +374,8 @@ function viewDetail(v) {
   <div class="preview" id="preview"><p class="mute">読み込み中…</p></div>
   <div class="mute" style="margin-top:8px;display:flex;justify-content:space-between;gap:12px"><span>保存名　<span id="fname">${esc(detailName(v))}</span></span><a id="openfull" class="full" target="_blank" rel="noopener" hidden>全画面で見る</a></div>
   <div class="field${miss('date')}"><label for="f-date">取引日</label><input id="f-date" type="date" data-f="date" value="${esc(v.date)}" max="${THIS_YEAR + 1}-12-31">${hint('date')}</div>
-  <div class="field${miss('amount')}"><label for="f-amount">金額（円）${opt ? '（任意）' : ''}</label><input id="f-amount" type="text" inputmode="numeric" data-f="amount" value="${v.amount ? v.amount : ''}" placeholder="例：3300">${hint('amount')}</div>
+  ${opt ? `<div class="field"><label for="f-title">名前</label><input id="f-title" type="text" data-f="title" maxlength="40" value="${esc(v.title || '')}" placeholder="例：出張精算">${(v.title || '').trim() ? '' : '<div class="hint">名前を入力すると保存できます。ファイル名の「カテゴリ_名前」に使います。</div>'}</div>`
+    : `<div class="field${miss('amount')}"><label for="f-amount">金額（円）</label><input id="f-amount" type="text" inputmode="numeric" data-f="amount" value="${v.amount ? v.amount : ''}" placeholder="例：3300">${hint('amount')}</div>`}
   <div class="field"><label id="l-cat">カテゴリ</label><button class="sel" aria-labelledby="l-cat" data-act="cat"><span>${v.cat ? esc(v.cat) : '選んでください'}</span>${ICON.down}</button></div>
   <div class="field"><label for="f-vendor">取引先（任意）</label><input id="f-vendor" type="text" data-f="vendor" list="vendors" maxlength="30" value="${esc(v.vendor)}" placeholder="例：Amazon"><datalist id="vendors">${vendors().map((x) => `<option value="${esc(x)}">`).join('')}</datalist></div>
   <div style="margin-top:24px"><button class="primary" id="save" data-act="save" ${detailOk(v) ? '' : 'disabled'}>保存する</button>
@@ -418,7 +423,7 @@ function renderSheet() {
   else if (s.type === 'busy') el.innerHTML = card(`<div class="spin"></div><p>${esc(s.text)}</p>`);
   else if (s.type === 'login') el.innerHTML = card(`<p>ログインの有効期限が切れました。\nログインし直してください。保存していない入力内容は消えます。</p><button class="primary h48" data-act="relogin">Google でログイン</button>`);
   else if (s.type === 'confirm') el.innerHTML = card(`<p>${esc(s.text)}</p><div class="btns"><button class="ghost" data-act="closeSheet">キャンセル</button><button class="primary h48" data-act="doDelete">削除する</button></div>`);
-  else if (s.type === 'zip') el.innerHTML = card(`<p>${esc(s.file.name)}\nを作成しました。</p>${navigator.canShare && navigator.canShare({ files: [s.file] }) ? '<button class="primary h48" data-act="share">保存先・共有先を選ぶ</button>' : ''}<a class="ghost" href="${s.url}" download="${esc(s.file.name)}">この端末に保存</a><button class="textbtn" data-act="closeSheet">閉じる</button>`);
+  else if (s.type === 'zip') el.innerHTML = card(`<p>${esc(s.file.name)}\nを作成しました。</p>${navigator.share ? '<button class="primary h48" data-act="share">保存先・共有先を選ぶ</button>' : ''}<a class="ghost" href="${s.url}" download="${esc(s.file.name)}">この端末に保存</a>${s.note ? `<p class="mute" style="font-size:13px;color:#6E561F">${esc(s.note)}</p>` : navigator.share ? '' : '<p class="mute" style="font-size:13px">このブラウザは共有に対応していません。保存してから送ってください。</p>'}<button class="textbtn" data-act="closeSheet">閉じる</button>`);
   else if (s.type === 'dest') {
     const years = []; for (let y = THIS_YEAR; y >= THIS_YEAR - 6; y--) years.push(y);
     const label = { move: 'ここへ移動', copy: 'ここへコピー', month: '表示する' }[s.mode];
@@ -449,7 +454,7 @@ async function readCanvas(cv) {
   return { blob, mime: 'image/jpeg', ext: 'jpg', date: parseDate(t), amount: parseAmount(t) };
 }
 function openDetail(r, back) {
-  S.view = { type: 'detail', isNew: true, back, fixedYm: back && back.type === 'folder' ? back.ym : '', blob: r.blob, mime: r.mime, ext: r.ext, other: !!r.other, kind: r.kind || '', date: r.date, amount: r.amount || 0, cat: '', vendor: '', read: { date: !!r.date, amount: !!r.amount } };
+  S.view = { type: 'detail', isNew: true, back, fixedYm: back && back.type === 'folder' ? back.ym : '', blob: r.blob, mime: r.mime, ext: r.ext, other: !!r.other, kind: r.kind || '', title: r.title || '', date: r.date, amount: r.amount || 0, cat: '', vendor: '', read: { date: !!r.date, amount: !!r.amount } };
   closeSheet(); render();
   if (!r.other && !r.date && !r.amount) msg('文字が不鮮明なため読み取れませんでした。\n手入力してください。');
 }
@@ -472,13 +477,13 @@ async function handleFolder(list) {
     const z = new JSZip(), paths = [];
     for (const f of files) { const pth = (f.webkitRelativePath || f.name).split('/').slice(1).join('/') || f.name; z.file(pth, f); paths.push(pth); }
     const blob = new File([await z.generateAsync({ type: 'blob' })], top + '.zip', { type: 'application/zip' });
-    openDetail({ blob, mime: 'application/zip', ext: 'zip', other: true, kind: 'folder', date: '', amount: 0 }, S.view);
+    openDetail({ blob, mime: 'application/zip', ext: 'zip', other: true, kind: 'folder', date: '', amount: 0, title: top }, S.view);
     S.view.folderName = top;
   } catch (e) { console.error(e); msg('フォルダを読み込めませんでした。\nもう一度お試しください。'); }
 }
 function asFile(file) {
   const ext = extOf({ name: file.name, mime: file.type });
-  return { blob: file, mime: file.type || 'application/octet-stream', ext, date: '', amount: 0, other: true };
+  return { blob: file, mime: file.type || 'application/octet-stream', ext, date: '', amount: 0, other: true, title: file.name.replace(/\.[A-Za-z0-9]{1,8}$/, '') };
 }
 async function handleFile(file) {
   if (!file) return;
@@ -567,7 +572,7 @@ const actions = {
   select() { S.selecting = !S.selecting; S.sel.clear(); render(); },
   edit(d) {
     const f = S.files.find((x) => x.id === d.id); if (!f) return;
-    S.view = { type: 'detail', isNew: false, id: f.id, orig: f, back: S.view, mime: f.mime, ext: extOf(f), kind: f.kind || '', date: f.date, amount: f.amount, cat: f.cat, vendor: f.vendor, read: {} };
+    S.view = { type: 'detail', isNew: false, id: f.id, orig: f, back: S.view, mime: f.mime, ext: extOf(f), kind: f.kind || '', title: f.title || (isFileLike(f) ? stemOf(f) : ''), date: f.date, amount: f.amount, cat: f.cat, vendor: f.vendor, read: {} };
     render();
   },
   closeCrop() { S.view = S.view.back || null; render(); },
@@ -587,15 +592,16 @@ const actions = {
   },
   async save() {
     const v = S.view; if (!detailOk(v)) return;
-    const m = { date: v.date, amount: v.amount, cat: v.cat, vendor: v.vendor.trim(), kind: v.kind || '' };
+    const fl = amountOptional(v);
+    const m = { date: v.date, amount: fl ? 0 : v.amount, cat: v.cat, vendor: v.vendor.trim(), kind: v.kind || '', title: fl ? v.title.trim() : '', mime: v.mime };
     busy('保存中…');
     try {
       if (v.isNew) {
         m.ym = destYm(v);
-        S.files.push(await Store.create(v.blob, v.mime, uniqueName(m.cat, m.amount, v.ext, m.ym), m));
+        S.files.push(await Store.create(v.blob, v.mime, uniqueName(m, v.ext, m.ym), m));
       } else {
         m.ym = destYm(v);
-        const rec = await Store.update(v.orig, uniqueName(m.cat, m.amount, v.ext, m.ym, v.id), m);
+        const rec = await Store.update(v.orig, uniqueName(m, v.ext, m.ym, v.id), m);
         S.files[S.files.findIndex((x) => x.id === v.id)] = rec;
       }
       if (v.url) URL.revokeObjectURL(v.url);
@@ -613,8 +619,8 @@ const actions = {
     if (mode === 'move' && ym === S.view.ym) { msg('いま開いている年月と同じです。\n別の年月を選んでください。'); return; }
     const n = S.sel.size;
     const ok = await eachSelected(mode === 'move' ? '移動中…' : 'コピー中…', async (f) => {
-      const name = uniqueName(f.cat, f.amount, extOf(f), ym, mode === 'move' ? f.id : undefined);
-      if (mode === 'move') S.files[S.files.indexOf(f)] = await Store.update(f, name, { date: f.date, amount: f.amount, cat: f.cat, vendor: f.vendor, kind: f.kind, ym });
+      const name = uniqueName({ ...f, title: f.title || (isFileLike(f) ? stemOf(f) : '') }, extOf(f), ym, mode === 'move' ? f.id : undefined);
+      if (mode === 'move') S.files[S.files.indexOf(f)] = await Store.update(f, name, { date: f.date, amount: f.amount, cat: f.cat, vendor: f.vendor, kind: f.kind, title: f.title || (isFileLike(f) ? stemOf(f) : ''), ym });
       else S.files.push(await Store.copy(f, name, ym));
     });
     if (ok) { render(); msg(`${n}件を${ymLabel(ym)}へ${mode === 'move' ? '移動' : 'コピー'}しました。`); }
@@ -643,7 +649,19 @@ const actions = {
       S.sheet = { type: 'zip', file, url: URL.createObjectURL(file) }; renderSheet();
     } catch (e) { fail(e); }
   },
-  async share() { try { await navigator.share({ files: [S.sheet.file] }); } catch (e) { /* 共有シートを閉じただけ */ } },
+  async share() {
+    const f = S.sheet.file;
+    // 端末によっては ZIP の共有を受け付けないため、その場合は理由を表示する（例：PC版 Chrome）
+    if (navigator.canShare && !navigator.canShare({ files: [f] })) {
+      const z = S.sheet; S.sheet = { ...z, note: 'この端末のブラウザは ZIP の共有に対応していません。「この端末に保存」で保存してから送ってください。' }; renderSheet(); return;
+    }
+    try { await navigator.share({ files: [f], title: f.name }); }
+    catch (e) {
+      if (e && e.name === 'AbortError') return;   // 共有シートを閉じただけ
+      console.error(e);
+      const z = S.sheet; S.sheet = { ...z, note: '共有できませんでした。「この端末に保存」で保存してから送ってください。' }; renderSheet();
+    }
+  },
 };
 
 document.addEventListener('click', (e) => {
