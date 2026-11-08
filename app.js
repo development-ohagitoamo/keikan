@@ -651,15 +651,17 @@ const actions = {
   },
   async share() {
     const f = S.sheet.file;
-    // 端末によっては ZIP の共有を受け付けないため、その場合は理由を表示する（例：PC版 Chrome）
-    if (navigator.canShare && !navigator.canShare({ files: [f] })) {
-      const z = S.sheet; S.sheet = { ...z, note: 'この端末のブラウザは ZIP の共有に対応していません。「この端末に保存」で保存してから送ってください。' }; renderSheet(); return;
-    }
-    try { await navigator.share({ files: [f], title: f.name }); }
+    const note = (t) => { const z = S.sheet; S.sheet = { ...z, note: t }; renderSheet(); };
+    if (!navigator.share) { note('このブラウザは共有に対応していません。「この端末に保存」で保存してから送ってください。'); return; }
+    // 端末によっては ZIP の共有を受け付けない（例：PC版 Chrome）
+    if (navigator.canShare && !navigator.canShare({ files: [f] })) { note('この端末のブラウザは ZIP の共有に対応していません。「この端末に保存」で保存してから送ってください。'); return; }
+    const t0 = Date.now();
+    try { await navigator.share({ files: [f] }); }   // title などを一緒に渡すと iPhone で失敗することがあるため、ファイルだけ渡す
     catch (e) {
-      if (e && e.name === 'AbortError') return;   // 共有シートを閉じただけ
       console.error(e);
-      const z = S.sheet; S.sheet = { ...z, note: '共有できませんでした。「この端末に保存」で保存してから送ってください。' }; renderSheet();
+      // 共有画面を閉じただけなら何もしない。画面が出る前に止まった場合（すぐに中止扱いになる）は失敗として案内する
+      if (e && e.name === 'AbortError' && Date.now() - t0 > 1000) return;
+      note(`共有できませんでした（${e && e.name ? e.name : 'エラー'}）。「この端末に保存」で保存してから送ってください。`);
     }
   },
 };
