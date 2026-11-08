@@ -423,7 +423,15 @@ function renderSheet() {
   else if (s.type === 'busy') el.innerHTML = card(`<div class="spin"></div><p>${esc(s.text)}</p>`);
   else if (s.type === 'login') el.innerHTML = card(`<p>ログインの有効期限が切れました。\nログインし直してください。保存していない入力内容は消えます。</p><button class="primary h48" data-act="relogin">Google でログイン</button>`);
   else if (s.type === 'confirm') el.innerHTML = card(`<p>${esc(s.text)}</p><div class="btns"><button class="ghost" data-act="closeSheet">キャンセル</button><button class="primary h48" data-act="doDelete">削除する</button></div>`);
-  else if (s.type === 'zip') el.innerHTML = card(`<p>${esc(s.file.name)}\nを作成しました。</p>${navigator.share ? '<button class="primary h48" data-act="share">保存先・共有先を選ぶ</button>' : ''}<a class="ghost" href="${s.url}" download="${esc(s.file.name)}">この端末に保存</a>${s.note ? `<p class="mute" style="font-size:13px;color:#6E561F">${esc(s.note)}</p>` : navigator.share ? '' : '<p class="mute" style="font-size:13px">このブラウザは共有に対応していません。保存してから送ってください。</p>'}<button class="textbtn" data-act="closeSheet">閉じる</button>`);
+  else if (s.type === 'zip') {
+    // PC（Chrome・Edge）：保存先を選ぶ画面で保存。スマホ：共有シート（保存先・共有先を選べる）
+    const pc = !!window.showSaveFilePicker && matchMedia('(pointer: fine)').matches;
+    const btn = pc ? '<button class="primary h48" data-act="pickSave">保存先を選んで保存</button>'
+      : navigator.share ? '<button class="primary h48" data-act="share">保存先・共有先を選ぶ</button>' : '';
+    const info = s.note ? `<p class="mute" style="font-size:13px;color:#6E561F">${esc(s.note)}</p>`
+      : btn ? '' : '<p class="mute" style="font-size:13px">このブラウザは共有に対応していません。保存してから送ってください。</p>';
+    el.innerHTML = card(`<p>${esc(s.file.name)}\nを作成しました。</p>${btn}<a class="ghost" href="${s.url}" download="${esc(s.file.name)}">この端末に保存</a>${info}<button class="textbtn" data-act="closeSheet">閉じる</button>`);
+  }
   else if (s.type === 'dest') {
     const years = []; for (let y = THIS_YEAR; y >= THIS_YEAR - 6; y--) years.push(y);
     const label = { move: 'ここへ移動', copy: 'ここへコピー', month: '表示する' }[s.mode];
@@ -648,6 +656,18 @@ const actions = {
       const file = new File([blob], `keikan_${ymLabel(ym)}.zip`, { type: 'application/zip' });
       S.sheet = { type: 'zip', file, url: URL.createObjectURL(file) }; renderSheet();
     } catch (e) { fail(e); }
+  },
+  async pickSave() {
+    const f = S.sheet.file;
+    const note = (t) => { const z = S.sheet; S.sheet = { ...z, note: t }; renderSheet(); };
+    try {
+      const h = await window.showSaveFilePicker({ suggestedName: f.name, types: [{ description: 'ZIP ファイル', accept: { 'application/zip': ['.zip'] } }] });
+      const w = await h.createWritable(); await w.write(f); await w.close();
+      note(`「${h.name}」を保存しました。`);
+    } catch (e) {
+      if (e && e.name === 'AbortError') return;   // 保存画面を閉じただけ
+      console.error(e); note(`保存できませんでした（${e && e.name ? e.name : 'エラー'}）。「この端末に保存」をお試しください。`);
+    }
   },
   async share() {
     const f = S.sheet.file;
